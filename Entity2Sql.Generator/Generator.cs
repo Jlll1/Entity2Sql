@@ -15,52 +15,56 @@ public class Generator : ISourceGenerator
   {
     if(context.SyntaxContextReceiver is not MainSyntaxReceiver syntaxReceiver) return;
 
-    foreach (var tg in syntaxReceiver.ToGenerate)
+    foreach (var tg in syntaxReceiver.EntitySqls)
     {
-      var columns = tg.GenerateFor.GetMembers().OfType<IPropertySymbol>()
+      var columns = tg.EntityClass.GetMembers().OfType<IPropertySymbol>()
         .Select(c => c.Name);
 
       var sb = new StringBuilder();
       sb.AppendLine(
-$@"namespace {tg.ParentClass.ContainingNamespace.ToDisplayString()}
+$@"namespace {tg.EntitySqlClass.ContainingNamespace.ToDisplayString()}
 {{
-    partial class {tg.ParentClass.Name.ToString()}
-    {{
-      public string SelectAll => @""
+    partial class {tg.EntitySqlClass.Name.ToString()}
+    {{");
+      if (tg.GenerateCrud)
+      {
+        sb.AppendLine(
+$@"        public string SelectAll => @""
 SELECT
     {String.Join(",\n    ", columns)}
 FROM {tg.TableName}
 "";
 
-      public string SelectById => @""
+        public string SelectById => @""
 SELECT
     {String.Join(",\n    ", columns)}
 FROM {tg.TableName}
 WHERE Id = @Id
 "";
 
-      public string Insert => @""
+        public string Insert => @""
 INSERT INTO {tg.TableName}
     ({String.Join(",\n    ", columns)})
 VALUES
     ({String.Join(",\n    ", columns.Select(c => $"@{c}"))})
 "";
 
-      public string UpdateById => @""
+        public string UpdateById => @""
 UPDATE {tg.TableName}
 SET {String.Join(",\n    ", columns.Where(c => c != "Id").Select(c => $"{c} = @{c}"))}
 WHERE Id = @Id
 "";
 
-      public string DeleteById => @""
+        public string DeleteById => @""
 DELETE FROM {tg.TableName}
 WHERE Id = @Id
 "";
     }}
 }}
 ");
+      }
 
-      context.AddSource($"{tg.ParentClass.Name.ToString()}.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
+      context.AddSource($"{tg.EntitySqlClass.Name.ToString()}.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
   }
 
@@ -72,30 +76,35 @@ WHERE Id = @Id
 
 public class MainSyntaxReceiver : ISyntaxContextReceiver
 {
-  private readonly List<GenerateInfo> _toGenerate = new();
-
-  public List<GenerateInfo> ToGenerate => _toGenerate;
+  private readonly List<EntitySql> _entitySqls = new();
+  public IEnumerable<EntitySql> EntitySqls => _entitySqls;
 
   public void OnVisitSyntaxNode(GeneratorSyntaxContext context)
   {
-    if (context.Node is not ClassDeclarationSyntax classDeclarationSyntax) return;
+    if (context.Node is not ClassDeclarationSyntax classDeclarationSyntax)
+      return;
 
-    INamedTypeSymbol classDeclaration = context.SemanticModel
+    INamedTypeSymbol entitySqlClassDeclaration = context.SemanticModel
       .GetDeclaredSymbol(classDeclarationSyntax) as INamedTypeSymbol
       ?? throw new Exception();
 
-    var generateCrudAttribute = classDeclaration.GetAttributes()
-      .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.GenerateCrudAttribute");
-    if (generateCrudAttribute is not null)
+    var classAttributes = entitySqlClassDeclaration.GetAttributes();
+
+    var entitySqlAttribute = classAttributes.FirstOrDefault(
+        a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.EntitySqlAttribute");
+    if (entitySqlAttribute is not null)
     {
-      INamedTypeSymbol classToGenerateFor = generateCrudAttribute.ConstructorArguments[0].Value as INamedTypeSymbol
+      INamedTypeSymbol entity = entitySqlAttribute.ConstructorArguments[0].Value as INamedTypeSymbol
         ?? throw new Exception();
-      string tableName = generateCrudAttribute.ConstructorArguments[1].Value as string
+      string tableName = entitySqlAttribute.ConstructorArguments[1].Value as string
         ?? throw new Exception();
 
-      _toGenerate.Add(new GenerateInfo(classDeclaration, classToGenerateFor, tableName));
+      var generateCrud = classAttributes.Any(
+        a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.GenerateCrudAttribute");
+
+      _entitySqls.Add(new EntitySql(entitySqlClassDeclaration, entity, tableName, generateCrud));
     }
   }
 
-  public record GenerateInfo(INamedTypeSymbol ParentClass, INamedTypeSymbol GenerateFor, string TableName);
+  public record EntitySql(INamedTypeSymbol EntitySqlClass, INamedTypeSymbol EntityClass, string TableName, bool GenerateCrud);
 }
