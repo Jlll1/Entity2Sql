@@ -17,7 +17,8 @@ public class Generator : ISourceGenerator
 
     foreach (var tg in syntaxReceiver.EntitySqls)
     {
-      var columns = tg.EntityClass.GetMembers().OfType<IPropertySymbol>()
+      var columns = tg.EntityClass.GetMembers()
+        .OfType<IPropertySymbol>()
         .Select(c => c.Name);
 
       var sb = new StringBuilder();
@@ -25,11 +26,8 @@ public class Generator : ISourceGenerator
 $@"namespace {tg.EntitySqlClass.ContainingNamespace.ToDisplayString()}
 {{
     partial class {tg.EntitySqlClass.Name.ToString()}
-    {{");
-      if (tg.GenerateCrud)
-      {
-        sb.AppendLine(
-$@"        public string SelectAll => @""
+    {{
+        public string SelectAll => @""
 SELECT
     {String.Join(",\n    ", columns)}
 FROM {tg.TableName}
@@ -62,7 +60,6 @@ WHERE Id = @Id
     }}
 }}
 ");
-      }
 
       context.AddSource($"{tg.EntitySqlClass.Name.ToString()}.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
     }
@@ -87,24 +84,23 @@ public class MainSyntaxReceiver : ISyntaxContextReceiver
     INamedTypeSymbol entitySqlClassDeclaration = context.SemanticModel
       .GetDeclaredSymbol(classDeclarationSyntax) as INamedTypeSymbol
       ?? throw new Exception();
-
     var classAttributes = entitySqlClassDeclaration.GetAttributes();
 
-    var entitySqlAttribute = classAttributes.FirstOrDefault(
-        a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.EntitySqlAttribute");
-    if (entitySqlAttribute is not null)
     {
-      INamedTypeSymbol entity = entitySqlAttribute.ConstructorArguments[0].Value as INamedTypeSymbol
-        ?? throw new Exception();
-      string tableName = entitySqlAttribute.ConstructorArguments[1].Value as string
-        ?? throw new Exception();
+      var entitySqlAttribute = classAttributes.FirstOrDefault(
+        a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.EntitySqlAttribute");
+      if (entitySqlAttribute is not null)
+      {
+        INamedTypeSymbol entity = entitySqlAttribute.ConstructorArguments[0].Value as INamedTypeSymbol
+          ?? throw new Exception();
+        string tableName = entitySqlAttribute.ConstructorArguments[1].Value as string
+          ?? throw new Exception();
 
-      var generateCrud = classAttributes.Any(
-        a => a.AttributeClass?.ToDisplayString() == "Entity2Sql.Attributes.GenerateCrudAttribute");
-
-      _entitySqls.Add(new EntitySql(entitySqlClassDeclaration, entity, tableName, generateCrud));
+        _entitySqls.Add(new EntitySql(entitySqlClassDeclaration, entity, tableName));
+      }
     }
+
   }
 
-  public record EntitySql(INamedTypeSymbol EntitySqlClass, INamedTypeSymbol EntityClass, string TableName, bool GenerateCrud);
+  public record EntitySql(INamedTypeSymbol EntitySqlClass, INamedTypeSymbol EntityClass, string TableName);
 }
